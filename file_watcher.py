@@ -224,8 +224,56 @@ def start_watching(config):
     observer.start()
     return observer
 
+def install_service():
+    """Install systemd service"""
+    service_content = """[Unit]
+Description=File Watcher Service
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory={working_dir}
+ExecStart=/usr/bin/python3 {script_path}
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+"""
+    
+    script_path = os.path.abspath(__file__)
+    working_dir = os.path.dirname(script_path)
+    
+    service_file = service_content.format(
+        script_path=script_path,
+        working_dir=working_dir
+    )
+    
+    service_path = "/etc/systemd/system/file-watcher.service"
+    
+    try:
+        with open(service_path, 'w') as f:
+            f.write(service_file)
+        
+        os.system("systemctl daemon-reload")
+        os.system("systemctl enable file-watcher.service")
+        print(f"Service installed at {service_path}")
+        print("Use 'systemctl start file-watcher' to start the service")
+        
+    except PermissionError:
+        print("Error: Root permissions required to install service")
+        sys.exit(1)
+    except Exception as e:
+        print(f"Error installing service: {e}")
+        sys.exit(1)
+
 def main():
     """Main entry point"""
+    if len(sys.argv) > 1 and sys.argv[1] == "install":
+        install_service()
+        return
+        
     print("File Watcher starting...")
     
     # Load configuration
