@@ -10,6 +10,7 @@ import logging
 import toml
 import glob
 import time
+import requests
 from pathlib import Path
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
@@ -39,6 +40,39 @@ def parse_file_size(size_str):
         return int(size_str[:-2]) * 1024 * 1024
     else:
         return int(size_str)
+
+def upload_file(file_path, url, auth_token, max_size):
+    """Upload file to API endpoint"""
+    try:
+        # Check file size
+        file_size = os.path.getsize(file_path)
+        if file_size > max_size:
+            print(f"File {file_path} too large ({file_size} bytes > {max_size} bytes)")
+            return False
+        
+        # Read file content
+        with open(file_path, 'rb') as f:
+            file_content = f.read()
+        
+        # Prepare headers
+        headers = {
+            'Authorization': f'Bearer {auth_token}',
+            'Content-Type': 'application/octet-stream'
+        }
+        
+        # Send POST request
+        response = requests.post(url, data=file_content, headers=headers)
+        
+        if response.status_code == 200:
+            print(f"Successfully uploaded {file_path} to {url}")
+            return True
+        else:
+            print(f"Failed to upload {file_path}: HTTP {response.status_code}")
+            return False
+            
+    except Exception as e:
+        print(f"Error uploading {file_path}: {e}")
+        return False
 
 class FileChangeHandler(FileSystemEventHandler):
     """Handle file system events"""
@@ -77,17 +111,34 @@ class FileChangeHandler(FileSystemEventHandler):
         
         return False
     
+    def _get_upload_url(self, file_path):
+        """Get upload URL for a specific file"""
+        abs_path = os.path.abspath(file_path)
+        return self.watched_files.get(abs_path)
+    
+    def _handle_file_change(self, file_path, event_type):
+        """Handle file change by uploading to appropriate URL"""
+        upload_url = self._get_upload_url(file_path)
+        if not upload_url:
+            return
+        
+        # Get settings for this URL
+        settings = self.config['upload'][upload_url]
+        auth_token = settings['auth_token']
+        max_size = parse_file_size(settings.get('max_file_size') or self.config.get('max_file_size'))
+        
+        print(f"File {event_type}: {file_path}")
+        upload_file(file_path, upload_url, auth_token, max_size)
+    
     def on_created(self, event):
         """Handle file creation events"""
         if not event.is_directory and self._should_process_file(event.src_path):
-            print(f"File created: {event.src_path}")
-            # TODO: Upload file
+            self._handle_file_change(event.src_path, "created")
     
     def on_modified(self, event):
         """Handle file modification events"""
         if not event.is_directory and self._should_process_file(event.src_path):
-            print(f"File modified: {event.src_path}")
-            # TODO: Upload file
+            self._handle_file_change(event.src_path, "modified")
 
 def start_watching(config):
     """Start watching files for changes"""
