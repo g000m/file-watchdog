@@ -121,6 +121,8 @@ class FileChangeHandler(FileSystemEventHandler):
     def __init__(self, config):
         self.config = config
         self.watched_files = self._get_watched_files()
+        self.rate_limit = config.get('rate_limit', 10)  # requests per second
+        self.last_request_time = 0
     
     def _get_watched_files(self):
         """Get map of file paths to upload URLs based on patterns"""
@@ -157,11 +159,26 @@ class FileChangeHandler(FileSystemEventHandler):
         abs_path = os.path.abspath(file_path)
         return self.watched_files.get(abs_path)
     
+    def _apply_rate_limit(self):
+        """Apply rate limiting to prevent overwhelming APIs"""
+        current_time = time.time()
+        min_interval = 1.0 / self.rate_limit  # minimum seconds between requests
+        time_since_last = current_time - self.last_request_time
+        
+        if time_since_last < min_interval:
+            sleep_time = min_interval - time_since_last
+            time.sleep(sleep_time)
+        
+        self.last_request_time = time.time()
+    
     def _handle_file_change(self, file_path, event_type):
         """Handle file change by uploading to appropriate URL"""
         upload_url = self._get_upload_url(file_path)
         if not upload_url:
             return
+        
+        # Apply rate limiting
+        self._apply_rate_limit()
         
         # Get settings for this URL
         settings = self.config['upload'][upload_url]
