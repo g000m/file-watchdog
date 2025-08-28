@@ -41,38 +41,47 @@ def parse_file_size(size_str):
     else:
         return int(size_str)
 
-def upload_file(file_path, url, auth_token, max_size):
-    """Upload file to API endpoint"""
-    try:
-        # Check file size
-        file_size = os.path.getsize(file_path)
-        if file_size > max_size:
-            print(f"File {file_path} too large ({file_size} bytes > {max_size} bytes)")
-            return False
-        
-        # Read file content
-        with open(file_path, 'rb') as f:
-            file_content = f.read()
-        
-        # Prepare headers
-        headers = {
-            'Authorization': f'Bearer {auth_token}',
-            'Content-Type': 'application/octet-stream'
-        }
-        
-        # Send POST request
-        response = requests.post(url, data=file_content, headers=headers)
-        
-        if response.status_code == 200:
-            print(f"Successfully uploaded {file_path} to {url}")
-            return True
-        else:
-            print(f"Failed to upload {file_path}: HTTP {response.status_code}")
-            return False
+def upload_file(file_path, url, auth_token, max_size, retry_attempts=3, retry_delay=5):
+    """Upload file to API endpoint with retry logic"""
+    
+    for attempt in range(retry_attempts):
+        try:
+            # Check file size
+            file_size = os.path.getsize(file_path)
+            if file_size > max_size:
+                print(f"File {file_path} too large ({file_size} bytes > {max_size} bytes)")
+                return False
             
-    except Exception as e:
-        print(f"Error uploading {file_path}: {e}")
-        return False
+            # Read file content
+            with open(file_path, 'rb') as f:
+                file_content = f.read()
+            
+            # Prepare headers
+            headers = {
+                'Authorization': f'Bearer {auth_token}',
+                'Content-Type': 'application/octet-stream'
+            }
+            
+            # Send POST request
+            response = requests.post(url, data=file_content, headers=headers, timeout=30)
+            
+            if response.status_code == 200:
+                print(f"Successfully uploaded {file_path} to {url}")
+                return True
+            else:
+                print(f"Failed to upload {file_path}: HTTP {response.status_code}")
+                
+        except Exception as e:
+            print(f"Error uploading {file_path} (attempt {attempt + 1}/{retry_attempts}): {e}")
+        
+        # Wait before retry (except for last attempt)
+        if attempt < retry_attempts - 1:
+            wait_time = retry_delay * (2 ** attempt)  # Exponential backoff
+            print(f"Retrying in {wait_time} seconds...")
+            time.sleep(wait_time)
+    
+    print(f"Failed to upload {file_path} after {retry_attempts} attempts")
+    return False
 
 class FileChangeHandler(FileSystemEventHandler):
     """Handle file system events"""
@@ -128,7 +137,9 @@ class FileChangeHandler(FileSystemEventHandler):
         max_size = parse_file_size(settings.get('max_file_size') or self.config.get('max_file_size'))
         
         print(f"File {event_type}: {file_path}")
-        upload_file(file_path, upload_url, auth_token, max_size)
+        retry_attempts = self.config.get('retry_attempts', 3)
+        retry_delay = self.config.get('retry_delay', 5)
+        upload_file(file_path, upload_url, auth_token, max_size, retry_attempts, retry_delay)
     
     def on_created(self, event):
         """Handle file creation events"""
