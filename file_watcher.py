@@ -11,6 +11,8 @@ import toml
 import glob
 import time
 import requests
+import json
+from datetime import datetime
 from pathlib import Path
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
@@ -41,7 +43,28 @@ def parse_file_size(size_str):
     else:
         return int(size_str)
 
-def upload_file(file_path, url, auth_token, max_size, retry_attempts=3, retry_delay=5):
+def log_error(message, log_url=None):
+    """Log error message to collector if configured"""
+    print(f"ERROR: {message}")
+    
+    if not log_url:
+        return
+    
+    try:
+        log_data = {
+            "timestamp": datetime.now().isoformat(),
+            "level": "ERROR",
+            "message": message,
+            "service": "file-watcher"
+        }
+        
+        headers = {'Content-Type': 'application/json'}
+        requests.post(log_url, json=log_data, headers=headers, timeout=10)
+        
+    except Exception as e:
+        print(f"Failed to send error log: {e}")
+
+def upload_file(file_path, url, auth_token, max_size, retry_attempts=3, retry_delay=5, log_url=None):
     """Upload file to API endpoint with retry logic"""
     
     for attempt in range(retry_attempts):
@@ -49,7 +72,8 @@ def upload_file(file_path, url, auth_token, max_size, retry_attempts=3, retry_de
             # Check file size
             file_size = os.path.getsize(file_path)
             if file_size > max_size:
-                print(f"File {file_path} too large ({file_size} bytes > {max_size} bytes)")
+                error_msg = f"File {file_path} too large ({file_size} bytes > {max_size} bytes)"
+                log_error(error_msg, log_url)
                 return False
             
             # Read file content
@@ -69,10 +93,16 @@ def upload_file(file_path, url, auth_token, max_size, retry_attempts=3, retry_de
                 print(f"Successfully uploaded {file_path} to {url}")
                 return True
             else:
-                print(f"Failed to upload {file_path}: HTTP {response.status_code}")
+                error_msg = f"Failed to upload {file_path}: HTTP {response.status_code}"
+                print(error_msg)
+                if attempt == retry_attempts - 1:  # Last attempt
+                    log_error(error_msg, log_url)
                 
         except Exception as e:
-            print(f"Error uploading {file_path} (attempt {attempt + 1}/{retry_attempts}): {e}")
+            error_msg = f"Error uploading {file_path} (attempt {attempt + 1}/{retry_attempts}): {e}"
+            print(error_msg)
+            if attempt == retry_attempts - 1:  # Last attempt
+                log_error(error_msg, log_url)
         
         # Wait before retry (except for last attempt)
         if attempt < retry_attempts - 1:
@@ -80,7 +110,9 @@ def upload_file(file_path, url, auth_token, max_size, retry_attempts=3, retry_de
             print(f"Retrying in {wait_time} seconds...")
             time.sleep(wait_time)
     
-    print(f"Failed to upload {file_path} after {retry_attempts} attempts")
+    final_error = f"Failed to upload {file_path} after {retry_attempts} attempts"
+    print(final_error)
+    log_error(final_error, log_url)
     return False
 
 class FileChangeHandler(FileSystemEventHandler):
@@ -139,7 +171,8 @@ class FileChangeHandler(FileSystemEventHandler):
         print(f"File {event_type}: {file_path}")
         retry_attempts = self.config.get('retry_attempts', 3)
         retry_delay = self.config.get('retry_delay', 5)
-        upload_file(file_path, upload_url, auth_token, max_size, retry_attempts, retry_delay)
+        log_url = self.config.get('log_url')
+        upload_file(file_path, upload_url, auth_token, max_size, retry_attempts, retry_delay, log_url)
     
     def on_created(self, event):
         """Handle file creation events"""
@@ -180,6 +213,20 @@ def main():
     
     # Load configuration
     config = load_config()
+    log_url = config.get('log_url')
+    
+    # Log startup
+    if log_url:
+        try:
+            startup_data = {
+                "timestamp": datetime.now().isoformat(),
+                "level": "INFO",
+                "message": "File Watcher service started",
+                "service": "file-watcher"
+            }
+            requests.post(log_url, json=startup_data, headers={'Content-Type': 'application/json'}, timeout=10)
+        except:
+            pass  # Don't fail startup if logging fails
     
     # Set up signal handlers for graceful shutdown
     signal.signal(signal.SIGINT, shutdown_handler)
@@ -199,8 +246,23 @@ def main():
         observer.join()
         
     except Exception as e:
-        print(f"Error: {e}")
+        error_msg = f"Fatal error: {e}"
+        print(error_msg)
+        log_error(error_msg, log_url)
         sys.exit(1)
+    
+    # Log shutdown
+    if log_url:
+        try:
+            shutdown_data = {
+                "timestamp": datetime.now().isoformat(),
+                "level": "INFO", 
+                "message": "File Watcher service stopped",
+                "service": "file-watcher"
+            }
+            requests.post(log_url, json=shutdown_data, headers={'Content-Type': 'application/json'}, timeout=10)
+        except:
+            pass
 
 def shutdown_handler(signum, frame):
     """Handle shutdown signals"""
