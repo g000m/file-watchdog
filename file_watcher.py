@@ -142,6 +142,10 @@ class FileChangeHandler(FileSystemEventHandler):
         """Check if file should be processed based on patterns"""
         abs_path = os.path.abspath(file_path)
         
+        # Always process config file changes
+        if abs_path.endswith('config.toml'):
+            return True
+        
         # Check if exact file is watched
         if abs_path in self.watched_files:
             return True
@@ -184,8 +188,48 @@ class FileChangeHandler(FileSystemEventHandler):
         self.debounce_time[file_path] = current_time
         return False  # Should not debounce (process)
     
+    def _reload_config(self, config_path):
+        """Reload configuration from file"""
+        try:
+            new_config = load_config(config_path)
+            self.config = new_config
+            self.watched_files = self._get_watched_files()
+            
+            message = f"Configuration reloaded from {config_path}"
+            print(message)
+            
+            # Always log config reloads
+            log_url = self.config.get('log_url')
+            if log_url:
+                try:
+                    log_data = {
+                        "timestamp": datetime.now().isoformat(),
+                        "level": "INFO",
+                        "message": message,
+                        "service": "file-watcher"
+                    }
+                    requests.post(log_url, json=log_data, headers={'Content-Type': 'application/json'}, timeout=10)
+                except:
+                    pass
+            
+            return True
+            
+        except Exception as e:
+            error_msg = f"Failed to reload config from {config_path}: {e}"
+            print(error_msg)
+            log_error(error_msg, self.config.get('log_url'))
+            return False
+    
     def _handle_file_change(self, file_path, event_type):
         """Handle file change by uploading to appropriate URL"""
+        # Handle config file changes specially
+        if file_path.endswith('config.toml'):
+            if self._should_debounce(file_path):
+                print(f"Debouncing config reload for {file_path}")
+                return
+            self._reload_config(file_path)
+            return
+        
         upload_url = self._get_upload_url(file_path)
         if not upload_url:
             return
@@ -232,6 +276,10 @@ def start_watching(config):
             dir_path = os.path.dirname(pattern)
             if dir_path:
                 watch_dirs.add(dir_path)
+    
+    # Always watch current directory for config.toml changes
+    current_dir = os.getcwd()
+    watch_dirs.add(current_dir)
     
     # Start watching each directory
     for watch_dir in watch_dirs:
