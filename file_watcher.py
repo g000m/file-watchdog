@@ -605,6 +605,29 @@ class FileChangeHandler(FileSystemEventHandler):
         """Handle file modification events"""
         if not event.is_directory and self._should_process_file(event.src_path):
             self._handle_file_change(event.src_path, "modified")
+    
+    def on_deleted(self, event):
+        """Handle file deletion events"""
+        if not event.is_directory and event.src_path.endswith('config.toml'):
+            # Handle config file deletion specially
+            error_msg = f"WARNING: Configuration file {event.src_path} was deleted! Service continuing with last known configuration."
+            print(error_msg)
+            # Log deletion as potential security incident
+            log_url = self.config.get('log_url')
+            if log_url:
+                try:
+                    log_data = {
+                        "timestamp": datetime.now().isoformat(),
+                        "level": "WARNING",
+                        "message": f"Configuration file deleted during runtime: {event.src_path}",
+                        "service": "file-watcher",
+                        "event_type": "config_deletion",
+                        "security_relevant": True
+                    }
+                    requests.post(log_url, json=log_data, headers={'Content-Type': 'application/json'}, timeout=10)
+                except:
+                    pass
+            self.config_file_deleted = True
 
 def start_watching(config):
     """Start watching files for changes"""
