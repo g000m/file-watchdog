@@ -16,12 +16,10 @@ COPY file_watcher.py ./
 
 # Install Python dependencies
 RUN pip install --upgrade pip
-RUN pip install pyinstaller staticx watchdog requests toml
+RUN pip install pyinstaller watchdog requests toml
 
-# Build with PyInstaller
-RUN pyinstaller --onefile --name kh-file-watcher file_watcher.py
-
-# Create static binary
-RUN staticx dist/kh-file-watcher dist/kh-file-watcher-static
+# Build with PyInstaller (already static on Linux)
+RUN pyinstaller --onefile --name kh-file-watcher-static file_watcher.py
 
 # Make executable
+RUN chmod +x dist/kh-file-watcher-static
