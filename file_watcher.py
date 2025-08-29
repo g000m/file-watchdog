@@ -494,6 +494,7 @@ def start_watching(config):
     """Start watching files for changes"""
     event_handler = FileChangeHandler(config)
     observer = Observer()
+    log_url = config.get('log_url')
     
     # Get all unique directories to watch
     watch_dirs = set()
@@ -508,11 +509,49 @@ def start_watching(config):
     current_dir = os.getcwd()
     watch_dirs.add(current_dir)
     
-    # Start watching each directory
+    # Track successful and failed directory watches
+    successful_dirs = []
+    failed_dirs = []
+    
+    # Start watching each directory with proper error handling
     for watch_dir in watch_dirs:
         if os.path.exists(watch_dir):
-            observer.schedule(event_handler, watch_dir, recursive=False)
-            print(f"Watching directory: {watch_dir}")
+            try:
+                # Check if directory is readable
+                os.listdir(watch_dir)
+                observer.schedule(event_handler, watch_dir, recursive=False)
+                successful_dirs.append(watch_dir)
+                print(f"Watching directory: {watch_dir}")
+            except PermissionError:
+                error_msg = f"Permission denied accessing directory: {watch_dir}"
+                failed_dirs.append(watch_dir)
+                print(f"WARNING: {error_msg}")
+                log_error(error_msg, log_url)
+            except Exception as e:
+                error_msg = f"Failed to watch directory {watch_dir}: {e}"
+                failed_dirs.append(watch_dir)
+                print(f"WARNING: {error_msg}")
+                log_error(error_msg, log_url)
+        else:
+            error_msg = f"Directory does not exist: {watch_dir}"
+            failed_dirs.append(watch_dir)
+            print(f"WARNING: {error_msg}")
+            log_error(error_msg, log_url)
+    
+    # Check if we successfully watching any directories
+    if not successful_dirs:
+        error_msg = f"Failed to watch any directories. Configured directories: {list(watch_dirs)}"
+        print(f"CRITICAL: {error_msg}")
+        log_error(error_msg, log_url)
+        raise RuntimeError("No directories available for monitoring - service cannot function")
+    
+    # Report summary
+    if failed_dirs:
+        summary_msg = f"Watching {len(successful_dirs)} directories successfully, {len(failed_dirs)} directories failed: {failed_dirs}"
+        print(f"WARNING: {summary_msg}")
+        log_error(summary_msg, log_url)
+    else:
+        print(f"Successfully watching all {len(successful_dirs)} directories")
     
     observer.start()
     return observer
