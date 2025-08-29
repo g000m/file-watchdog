@@ -9,6 +9,7 @@ import signal
 import logging
 import toml
 import glob
+import fnmatch
 import time
 import requests
 import json
@@ -318,23 +319,9 @@ class FileChangeHandler(FileSystemEventHandler):
     
     def __init__(self, config):
         self.config = config
-        self.watched_files = self._get_watched_files()
         self.rate_limit = config.get('rate_limit', 10)  # requests per second
         self.last_request_time = 0
         self.debounce_time = {}  # Track last modification time per file
-    
-    def _get_watched_files(self):
-        """Get map of file paths to upload URLs based on patterns"""
-        watched_files = {}
-        
-        for url, settings in self.config.get('upload', {}).items():
-            for pattern in settings.get('paths', []):
-                # Expand glob patterns to actual files
-                matching_files = glob.glob(pattern)
-                for file_path in matching_files:
-                    watched_files[os.path.abspath(file_path)] = url
-        
-        return watched_files
     
     def _should_process_file(self, file_path):
         """Check if file should be processed based on patterns"""
@@ -343,24 +330,27 @@ class FileChangeHandler(FileSystemEventHandler):
         # Always process config file changes
         if abs_path.endswith('config.toml'):
             return True
-        
-        # Check if exact file is watched
-        if abs_path in self.watched_files:
-            return True
             
         # Check if file matches any pattern
         for url, settings in self.config.get('upload', {}).items():
             for pattern in settings.get('paths', []):
-                if glob.fnmatch.fnmatch(abs_path, os.path.abspath(pattern)):
-                    self.watched_files[abs_path] = url
+                # Use fnmatch for pattern matching without expanding globs
+                if fnmatch.fnmatch(abs_path, pattern) or fnmatch.fnmatch(abs_path, os.path.abspath(pattern)):
                     return True
         
         return False
     
     def _get_upload_url(self, file_path):
-        """Get upload URL for a specific file"""
+        """Get upload URL for a specific file by matching patterns"""
         abs_path = os.path.abspath(file_path)
-        return self.watched_files.get(abs_path)
+        
+        # Find matching pattern and return corresponding URL
+        for url, settings in self.config.get('upload', {}).items():
+            for pattern in settings.get('paths', []):
+                if fnmatch.fnmatch(abs_path, pattern) or fnmatch.fnmatch(abs_path, os.path.abspath(pattern)):
+                    return url
+        
+        return None
     
     def _apply_rate_limit(self):
         """Apply rate limiting to prevent overwhelming APIs"""
@@ -394,18 +384,9 @@ class FileChangeHandler(FileSystemEventHandler):
             new_config = load_config(config_path)
             validate_config(new_config)
             
-            # Calculate new watched files based on new config
-            new_watched_files = {}
-            for url, settings in new_config.get('upload', {}).items():
-                for pattern in settings.get('paths', []):
-                    matching_files = glob.glob(pattern)
-                    for file_path in matching_files:
-                        new_watched_files[os.path.abspath(file_path)] = url
-            
-            # Atomic update - replace all state at once
+            # Atomic update - replace config (no need for watched_files with lazy matching)
             old_config = self.config
             self.config = new_config
-            self.watched_files = new_watched_files
             
             # Get all paths being watched for logging
             all_paths = []
