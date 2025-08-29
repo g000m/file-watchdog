@@ -15,6 +15,8 @@ import requests
 import json
 import subprocess
 import re
+import atexit
+import fcntl
 from datetime import datetime
 from pathlib import Path
 from watchdog.observers import Observer
@@ -89,6 +91,56 @@ def parse_file_size(size_str):
             
     except (ValueError, TypeError) as e:
         raise ValueError(f"Invalid file size format '{size_str}': {e}")
+
+class PIDLockError(Exception):
+    """Exception raised when PID file locking fails"""
+    pass
+
+def create_pid_lock():
+    """Create PID file with exclusive lock to prevent multiple instances"""
+    # Determine PID file location
+    if os.getuid() == 0:  # Running as root
+        pid_file = "/var/run/file-watcher.pid"
+    else:
+        # Running as non-root, use tmp directory
+        pid_file = f"/tmp/file-watcher-{os.getuid()}.pid"
+    
+    try:
+        # Open PID file for writing
+        pid_fd = open(pid_file, 'w')
+        
+        # Try to acquire exclusive lock (non-blocking)
+        fcntl.flock(pid_fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        
+        # Write current PID to file
+        pid_fd.write(str(os.getpid()))
+        pid_fd.flush()
+        
+        # Register cleanup function to remove PID file on exit
+        def cleanup_pid_file():
+            try:
+                fcntl.flock(pid_fd.fileno(), fcntl.LOCK_UN)
+                pid_fd.close()
+                os.unlink(pid_file)
+            except:
+                pass  # Don't fail on cleanup errors
+        
+        atexit.register(cleanup_pid_file)
+        
+        # Keep file descriptor open to maintain lock
+        return pid_fd, pid_file
+        
+    except (IOError, OSError) as e:
+        if e.errno == 11:  # EAGAIN - lock already held
+            # Try to read existing PID for better error message
+            try:
+                with open(pid_file, 'r') as f:
+                    existing_pid = f.read().strip()
+                raise PIDLockError(f"Another instance is already running (PID: {existing_pid})")
+            except:
+                raise PIDLockError(f"Another instance is already running (PID file: {pid_file})")
+        else:
+            raise PIDLockError(f"Failed to create PID file {pid_file}: {e}")
 
 def validate_config(config):
     """Validate configuration structure and required fields"""
@@ -628,6 +680,14 @@ def main():
         return
         
     print("File Watcher starting...")
+    
+    # Create PID lock to prevent multiple instances
+    try:
+        pid_fd, pid_file = create_pid_lock()
+        print(f"Created PID lock at: {pid_file}")
+    except PIDLockError as e:
+        print(f"ERROR: {e}")
+        sys.exit(1)
     
     # Load and validate configuration
     config = load_config()
