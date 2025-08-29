@@ -290,8 +290,11 @@ def upload_file(file_path, url, auth_token, max_size, config, retry_attempts=3, 
                 'Content-Type': 'application/octet-stream'
             }
             
+            # Calculate dynamic timeout based on file size (minimum 30 seconds, +1 second per 100KB)
+            dynamic_timeout = max(30, 30 + (file_size // (100 * 1024)))
+            
             # Send POST request
-            response = requests.post(url, data=file_content, headers=headers, timeout=30)
+            response = requests.post(url, data=file_content, headers=headers, timeout=dynamic_timeout)
             
             if response.status_code == 200:
                 print(f"Successfully uploaded {file_path} to {url}")
