@@ -1,13 +1,11 @@
-FROM python:3.9-slim
+FROM python:3.9-alpine
 
-# Install build dependencies including scons
-RUN apt-get update && apt-get install -y \
-    patchelf \
-    scons \
+# Install build dependencies
+RUN apk add --no-cache \
     gcc \
-    libc6-dev \
-    binutils \
-    && rm -rf /var/lib/apt/lists/*
+    musl-dev \
+    linux-headers \
+    binutils
 
 WORKDIR /app
 
@@ -18,8 +16,8 @@ COPY file_watcher.py ./
 RUN pip install --upgrade pip
 RUN pip install pyinstaller watchdog requests toml
 
-# Build with PyInstaller (already static on Linux)
-RUN pyinstaller --onefile --name kh-file-watcher-static file_watcher.py
+# Build with PyInstaller with static linking
+RUN pyinstaller --onefile --name kh-file-watcher-static --strip file_watcher.py
 
 # Make executable
 RUN chmod +x dist/kh-file-watcher-static
