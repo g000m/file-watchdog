@@ -217,13 +217,18 @@ def validate_file_content(file_path, config):
         if file_type == 'application/x-executable':
             return False, "Executable files are not allowed for security reasons"
         
-        # Read file content for sensitive data scanning
-        with open(file_path, 'rb') as f:
-            content = f.read()
+        # Check file size before reading content to avoid loading large files
+        file_size = os.path.getsize(file_path)
+        max_scan_size = 1024 * 1024  # 1MB limit for content scanning
         
         # Skip sensitive content scanning for large binary files
-        if file_type.startswith('application/') and len(content) > 1024 * 1024:  # 1MB
+        if file_type.startswith('application/') and file_size > max_scan_size:
             return True, None  # Allow large binary files without content scanning
+        
+        # Read file content for sensitive data scanning (only for smaller files)
+        with open(file_path, 'rb') as f:
+            # Limit read size as additional safety
+            content = f.read(max_scan_size)
         
         # Scan for sensitive content in text files or small binary files
         sensitive_findings = scan_for_sensitive_content(content, file_path)
