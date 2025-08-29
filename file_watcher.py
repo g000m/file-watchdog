@@ -335,6 +335,24 @@ class FileChangeHandler(FileSystemEventHandler):
         """Check if file should be processed based on patterns"""
         abs_path = os.path.abspath(file_path)
         
+        # Skip symbolic links for security and predictability
+        if os.path.islink(abs_path):
+            print(f"INFO: Skipping symbolic link: {abs_path}")
+            # Log symlink skips to error collector if configured
+            log_url = self.config.get('log_url')
+            if log_url:
+                try:
+                    log_data = {
+                        "timestamp": datetime.now().isoformat(),
+                        "level": "INFO",
+                        "message": f"Skipped symbolic link: {abs_path}",
+                        "service": "file-watcher"
+                    }
+                    requests.post(log_url, json=log_data, headers={'Content-Type': 'application/json'}, timeout=5)
+                except:
+                    pass  # Don't fail processing if logging fails
+            return False
+        
         # Always process config file changes
         if abs_path.endswith('config.toml'):
             return True
