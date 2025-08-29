@@ -1,0 +1,27 @@
+FROM python:3.9-slim
+
+# Install build dependencies including scons
+RUN apt-get update && apt-get install -y \
+    patchelf \
+    scons \
+    gcc \
+    libc6-dev \
+    binutils \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy files
+COPY file_watcher.py ./
+
+# Install Python dependencies
+RUN pip install --upgrade pip
+RUN pip install pyinstaller staticx watchdog requests toml
+
+# Build with PyInstaller
+RUN pyinstaller --onefile --name kh-file-watcher file_watcher.py
+
+# Create static binary
+RUN staticx dist/kh-file-watcher dist/kh-file-watcher-static
+
+# Make executable
