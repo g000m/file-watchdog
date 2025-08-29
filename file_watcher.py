@@ -32,17 +32,61 @@ def load_config(config_path="config.toml"):
         sys.exit(1)
 
 def parse_file_size(size_str):
-    """Convert size string like '1MB' to bytes"""
+    """Convert size string like '1MB' to bytes with validation"""
     if not size_str:
         return 1024 * 1024  # 1MB default
     
-    size_str = size_str.upper()
-    if size_str.endswith('KB'):
-        return int(size_str[:-2]) * 1024
-    elif size_str.endswith('MB'):
-        return int(size_str[:-2]) * 1024 * 1024
-    else:
-        return int(size_str)
+    try:
+        # Convert to string and strip whitespace
+        size_str = str(size_str).strip().upper()
+        
+        if not size_str:
+            return 1024 * 1024  # Default if empty after strip
+        
+        # Handle plain numbers (assume bytes)
+        if size_str.isdigit():
+            size_bytes = int(size_str)
+            if size_bytes < 0:
+                raise ValueError("File size cannot be negative")
+            return size_bytes
+        
+        # Handle size units
+        if size_str.endswith('KB'):
+            size_value = size_str[:-2].strip()
+            if not size_value:
+                raise ValueError("Missing size value before 'KB'")
+            size_num = float(size_value)
+            if size_num < 0:
+                raise ValueError("File size cannot be negative")
+            return int(size_num * 1024)
+            
+        elif size_str.endswith('MB'):
+            size_value = size_str[:-2].strip()
+            if not size_value:
+                raise ValueError("Missing size value before 'MB'")
+            size_num = float(size_value)
+            if size_num < 0:
+                raise ValueError("File size cannot be negative")
+            return int(size_num * 1024 * 1024)
+            
+        elif size_str.endswith('GB'):
+            size_value = size_str[:-2].strip()
+            if not size_value:
+                raise ValueError("Missing size value before 'GB'")
+            size_num = float(size_value)
+            if size_num < 0:
+                raise ValueError("File size cannot be negative")
+            return int(size_num * 1024 * 1024 * 1024)
+            
+        else:
+            # Try to parse as plain number
+            size_num = float(size_str)
+            if size_num < 0:
+                raise ValueError("File size cannot be negative")
+            return int(size_num)
+            
+    except (ValueError, TypeError) as e:
+        raise ValueError(f"Invalid file size format '{size_str}': {e}")
 
 def validate_config(config):
     """Validate configuration structure and required fields"""
@@ -69,6 +113,20 @@ def validate_config(config):
         # Validate paths is a list
         if not isinstance(settings['paths'], list):
             raise ValueError(f"'paths' for endpoint {url} must be a list")
+        
+        # Validate max_file_size if specified
+        if 'max_file_size' in settings:
+            try:
+                parse_file_size(settings['max_file_size'])
+            except ValueError as e:
+                raise ValueError(f"Invalid max_file_size for endpoint {url}: {e}")
+    
+    # Validate global max_file_size if specified
+    if 'max_file_size' in config:
+        try:
+            parse_file_size(config['max_file_size'])
+        except ValueError as e:
+            raise ValueError(f"Invalid global max_file_size: {e}")
     
     return True
 
@@ -299,7 +357,15 @@ class FileChangeHandler(FileSystemEventHandler):
         # Get settings for this URL
         settings = self.config['upload'][upload_url]
         auth_token = settings['auth_token']
-        max_size = parse_file_size(settings.get('max_file_size') or self.config.get('max_file_size'))
+        
+        # Parse max file size with error handling
+        try:
+            max_size = parse_file_size(settings.get('max_file_size') or self.config.get('max_file_size'))
+        except ValueError as e:
+            error_msg = f"Invalid max_file_size configuration: {e}"
+            print(error_msg)
+            log_error(error_msg, self.config.get('log_url'))
+            return  # Skip processing this file
         
         print(f"File {event_type}: {file_path}")
         retry_attempts = self.config.get('retry_attempts', 3)
