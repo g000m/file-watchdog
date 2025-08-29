@@ -105,3 +105,9 @@ pyinstaller --onefile --name file-watcher file_watcher.py
 - All configuration changes logged with watched paths for debugging
 - Service runs as root for system file access
 - Config file should have restricted permissions (600) to protect tokens
+
+## Development Workflow
+
+Always make a git commit after each feature or set of changes:
+1. Stage changes with `git add`
+2. Create descriptive commit message summarizing what was implemented/fixed
