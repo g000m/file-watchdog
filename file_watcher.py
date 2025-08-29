@@ -369,6 +369,13 @@ class FileChangeHandler(FileSystemEventHandler):
         current_time = time.time()
         debounce_seconds = 1.0  # Ignore changes within 1 second of last change
         
+        # Clean up old entries periodically to prevent memory growth
+        if len(self.debounce_time) > 1000:  # Cleanup threshold
+            cutoff_time = current_time - 3600  # Remove entries older than 1 hour
+            old_entries = [path for path, timestamp in self.debounce_time.items() if timestamp < cutoff_time]
+            for path in old_entries:
+                del self.debounce_time[path]
+        
         last_time = self.debounce_time.get(file_path, 0)
         if current_time - last_time < debounce_seconds:
             return True  # Should debounce (ignore)
