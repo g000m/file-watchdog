@@ -44,6 +44,34 @@ def parse_file_size(size_str):
     else:
         return int(size_str)
 
+def validate_config(config):
+    """Validate configuration structure and required fields"""
+    if not isinstance(config, dict):
+        raise ValueError("Config must be a dictionary")
+    
+    # Check upload section exists and is valid
+    upload_section = config.get('upload', {})
+    if not isinstance(upload_section, dict) or not upload_section:
+        raise ValueError("Config must have 'upload' section with at least one endpoint")
+    
+    # Validate each upload endpoint
+    for url, settings in upload_section.items():
+        if not isinstance(settings, dict):
+            raise ValueError(f"Upload settings for {url} must be a dictionary")
+        
+        # Required fields
+        if not settings.get('auth_token'):
+            raise ValueError(f"Missing required 'auth_token' for endpoint {url}")
+        
+        if not settings.get('paths'):
+            raise ValueError(f"Missing required 'paths' for endpoint {url}")
+        
+        # Validate paths is a list
+        if not isinstance(settings['paths'], list):
+            raise ValueError(f"'paths' for endpoint {url} must be a list")
+    
+    return True
+
 def log_error(message, log_url=None):
     """Log error message to collector if configured"""
     print(f"ERROR: {message}")
@@ -189,14 +217,28 @@ class FileChangeHandler(FileSystemEventHandler):
         self.debounce_time[file_path] = current_time
         return False  # Should not debounce (process)
     
+    
     def _reload_config(self, config_path):
-        """Reload configuration from file"""
+        """Reload configuration from file with atomic update"""
         try:
+            # Load and validate new config without affecting current state
             new_config = load_config(config_path)
-            self.config = new_config
-            self.watched_files = self._get_watched_files()
+            validate_config(new_config)
             
-            # Get all paths being watched
+            # Calculate new watched files based on new config
+            new_watched_files = {}
+            for url, settings in new_config.get('upload', {}).items():
+                for pattern in settings.get('paths', []):
+                    matching_files = glob.glob(pattern)
+                    for file_path in matching_files:
+                        new_watched_files[os.path.abspath(file_path)] = url
+            
+            # Atomic update - replace all state at once
+            old_config = self.config
+            self.config = new_config
+            self.watched_files = new_watched_files
+            
+            # Get all paths being watched for logging
             all_paths = []
             for url, settings in self.config.get('upload', {}).items():
                 for pattern in settings.get('paths', []):
@@ -227,7 +269,9 @@ class FileChangeHandler(FileSystemEventHandler):
         except Exception as e:
             error_msg = f"Failed to reload config from {config_path}: {e}"
             print(error_msg)
-            log_error(error_msg, self.config.get('log_url'))
+            # Use old config's log_url if available
+            log_url = getattr(self, 'config', {}).get('log_url')
+            log_error(error_msg, log_url)
             return False
     
     def _handle_file_change(self, file_path, event_type):
@@ -355,8 +399,13 @@ def main():
         
     print("File Watcher starting...")
     
-    # Load configuration
+    # Load and validate configuration
     config = load_config()
+    try:
+        validate_config(config)
+    except ValueError as e:
+        print(f"Configuration validation error: {e}")
+        sys.exit(1)
     log_url = config.get('log_url')
     
     # Get initial watched paths for logging
