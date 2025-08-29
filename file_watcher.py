@@ -123,6 +123,7 @@ class FileChangeHandler(FileSystemEventHandler):
         self.watched_files = self._get_watched_files()
         self.rate_limit = config.get('rate_limit', 10)  # requests per second
         self.last_request_time = 0
+        self.debounce_time = {}  # Track last modification time per file
     
     def _get_watched_files(self):
         """Get map of file paths to upload URLs based on patterns"""
@@ -171,10 +172,27 @@ class FileChangeHandler(FileSystemEventHandler):
         
         self.last_request_time = time.time()
     
+    def _should_debounce(self, file_path):
+        """Check if file change should be debounced (ignore rapid successive changes)"""
+        current_time = time.time()
+        debounce_seconds = 1.0  # Ignore changes within 1 second of last change
+        
+        last_time = self.debounce_time.get(file_path, 0)
+        if current_time - last_time < debounce_seconds:
+            return True  # Should debounce (ignore)
+        
+        self.debounce_time[file_path] = current_time
+        return False  # Should not debounce (process)
+    
     def _handle_file_change(self, file_path, event_type):
         """Handle file change by uploading to appropriate URL"""
         upload_url = self._get_upload_url(file_path)
         if not upload_url:
+            return
+        
+        # Debounce rapid file changes
+        if self._should_debounce(file_path):
+            print(f"Debouncing {event_type} for {file_path}")
             return
         
         # Apply rate limiting
