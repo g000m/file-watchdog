@@ -392,7 +392,22 @@ def main():
             while True:
                 time.sleep(1)
         except KeyboardInterrupt:
+            print("File Watcher shutting down...")
             observer.stop()
+            
+            # Send shutdown log for Ctrl+C
+            if log_url:
+                try:
+                    shutdown_data = {
+                        "timestamp": datetime.now().isoformat(),
+                        "level": "INFO", 
+                        "message": "File Watcher service stopped (Ctrl+C)",
+                        "service": "file-watcher"
+                    }
+                    requests.post(log_url, json=shutdown_data, headers={'Content-Type': 'application/json'}, timeout=5)
+                except:
+                    pass
+                    
         observer.join()
         
     except Exception as e:
@@ -417,6 +432,24 @@ def main():
 def shutdown_handler(signum, frame):
     """Handle shutdown signals"""
     print("File Watcher shutting down...")
+    
+    # Try to send shutdown log before exiting
+    try:
+        # Load config to get log_url
+        config = load_config()
+        log_url = config.get('log_url')
+        
+        if log_url:
+            shutdown_data = {
+                "timestamp": datetime.now().isoformat(),
+                "level": "INFO", 
+                "message": "File Watcher service stopped (signal)",
+                "service": "file-watcher"
+            }
+            requests.post(log_url, json=shutdown_data, headers={'Content-Type': 'application/json'}, timeout=5)
+    except:
+        pass  # Don't block shutdown if logging fails
+    
     sys.exit(0)
 
 if __name__ == "__main__":
