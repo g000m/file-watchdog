@@ -382,6 +382,7 @@ class FileChangeHandler(FileSystemEventHandler):
         self.rate_limit = config.get('rate_limit', 10)  # requests per second
         self.last_request_time = 0
         self.debounce_time = {}  # Track last modification time per file
+        self.config_file_deleted = False  # Track if config file was deleted
     
     def _should_process_file(self, file_path):
         """Check if file should be processed based on patterns"""
@@ -465,9 +466,54 @@ class FileChangeHandler(FileSystemEventHandler):
     def _reload_config(self, config_path):
         """Reload configuration from file with atomic update"""
         try:
+            # Check if config file exists (could have been deleted)
+            if not os.path.exists(config_path):
+                if not self.config_file_deleted:
+                    # First time detecting deletion
+                    error_msg = f"WARNING: Configuration file {config_path} was deleted! Service continuing with last known configuration."
+                    print(error_msg)
+                    # Log deletion as potential security incident
+                    log_url = getattr(self, 'config', {}).get('log_url')
+                    if log_url:
+                        try:
+                            log_data = {
+                                "timestamp": datetime.now().isoformat(),
+                                "level": "WARNING",
+                                "message": f"Configuration file deleted during runtime: {config_path}",
+                                "service": "file-watcher",
+                                "event_type": "config_deletion",
+                                "security_relevant": True
+                            }
+                            requests.post(log_url, json=log_data, headers={'Content-Type': 'application/json'}, timeout=10)
+                        except:
+                            pass
+                    self.config_file_deleted = True
+                return False
+            
             # Load and validate new config without affecting current state
             new_config = load_config(config_path)
             validate_config(new_config)
+            
+            # Check if this is config file recreation after deletion
+            if self.config_file_deleted:
+                recreation_msg = f"WARNING: Configuration file {config_path} was recreated - potential security incident!"
+                print(recreation_msg)
+                # Log recreation as potential security incident 
+                log_url = getattr(self, 'config', {}).get('log_url')
+                if log_url:
+                    try:
+                        log_data = {
+                            "timestamp": datetime.now().isoformat(),
+                            "level": "WARNING", 
+                            "message": f"Configuration file recreated after deletion: {config_path}",
+                            "service": "file-watcher",
+                            "event_type": "config_recreation",
+                            "security_relevant": True
+                        }
+                        requests.post(log_url, json=log_data, headers={'Content-Type': 'application/json'}, timeout=10)
+                    except:
+                        pass
+                self.config_file_deleted = False  # Reset flag
             
             # Atomic update - replace config (no need for watched_files with lazy matching)
             old_config = self.config
