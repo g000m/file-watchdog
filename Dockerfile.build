@@ -1,11 +1,12 @@
-FROM python:3.9-alpine
+FROM almalinux:8
 
-# Install build dependencies
-RUN apk add --no-cache \
+# Install dependencies
+RUN dnf install -y \
+    python3 \
+    python3-pip \
     gcc \
-    musl-dev \
-    linux-headers \
-    binutils
+    glibc-devel \
+    && dnf clean all
 
 WORKDIR /app
 
@@ -13,8 +14,8 @@ WORKDIR /app
 COPY file_watcher.py ./
 
 # Install Python dependencies
-RUN pip install --upgrade pip
-RUN pip install pyinstaller watchdog requests toml
+RUN pip3 install --upgrade pip
+RUN pip3 install pyinstaller watchdog requests toml
 
 # Build with PyInstaller with static linking
 RUN pyinstaller --onefile --name kh-file-watcher-static --strip file_watcher.py
