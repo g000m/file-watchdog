@@ -1,0 +1,16 @@
+# File Watcher Configuration
+log_url = "https://example.com/log"
+max_file_size = "1MB"
+retry_attempts = 3
+retry_delay = 5
+rate_limit = 10
+
+[upload."https://example.com/upload/route1"]
+auth_token = "example_token_1"
+paths = ["./data/*.db", "./localtest.txt"]
+
+[upload."https://example.com/upload/route2"]
+auth_token = "example_token_2"
+max_file_size = "128KB"
+paths = ["data.json"]
+ the
