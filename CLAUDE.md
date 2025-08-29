@@ -4,66 +4,104 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a BIND DNS zone file monitoring system that watches for changes to DNS zone files and automatically uploads them to a remote API endpoint. The system is implemented as a single Bash script that uses inotify to monitor file system events.
+This is a general-purpose file monitoring system that watches for changes to files and automatically uploads them to configured API endpoints. The system is implemented as a Python script using the watchdog library for cross-platform file monitoring.
 
 ## Architecture
 
-The project consists of a single Bash script (`zonefile_watcher.sh`) that:
+The project consists of a single Python script (`file_watcher.py`) that:
 
-1. **Monitors** `/var/named` directory for `.db` file changes using `inotifywait`
-2. **Detects** MOVED_TO events (indicating file updates in BIND's atomic file replacement pattern)
-3. **Uploads** changed zone files to a remote API using curl with Bearer token authentication
-4. **Notifies** via email on upload failures or script termination
-5. **Manages** process lifecycle with PID files to prevent multiple instances
+1. **Monitors** configured file paths and patterns using watchdog
+2. **Detects** CREATE and MODIFY events (ignores DELETE events)
+3. **Uploads** changed files to configured API endpoints via HTTP POST with Bearer token authentication
+4. **Implements** retry logic with exponential backoff for failed uploads
+5. **Provides** rate limiting to prevent overwhelming APIs
+6. **Logs** errors to optional log collector endpoint
+7. **Supports** hot-reload of configuration without service restart
+8. **Self-installs** as systemd service
 
-## Environment Configuration
+## Configuration
 
-The script requires environment variables loaded from `~/scripts/.env`:
-- `API_URL`: Remote API endpoint for uploading zone files
-- `ZONEFILE_KEY`: Bearer token for API authentication  
-- `EMAIL_TO`: Email address for notifications (optional)
+Uses TOML configuration file (`config.toml`) with:
+- Multiple upload destinations with different API endpoints and auth tokens
+- File patterns (supports glob patterns like `/var/named/*.*.db`)
+- Rate limiting, retry logic, and file size limits
+- Optional log collector endpoint for structured error logging
+
+Example:
+```toml
+log_url = "https://logs.example.com/api"
+max_file_size = "1MB"
+retry_attempts = 3
+retry_delay = 5
+rate_limit = 10
+
+[upload."https://api.example.com/upload"]
+auth_token = "bearer_token_here"
+paths = ["/var/named/*.*.db", "/etc/configs/*.conf"]
+```
 
 ## Common Commands
 
 ### Running the watcher
 ```bash
-# Run interactively (foreground)
-./zonefile_watcher.sh
+# Install dependencies (one-time setup)
+pip install -r requirements.txt
+# OR use virtual environment:
+python3 -m venv venv && source venv/bin/activate && pip install -r requirements.txt
 
-# Run in background
-./zonefile_watcher.sh --background
+# Run directly
+python3 file_watcher.py
+# OR with venv: source venv/bin/activate && python3 file_watcher.py
 
-# Stop running instance
-./zonefile_watcher.sh kill
-
-# Test upload with specific file
-./zonefile_watcher.sh test /path/to/test.db
+# Stop with Ctrl+C
 ```
 
-### Monitoring
+### Service installation (Linux)
 ```bash
-# Check if running
-ps aux | grep zonefile_watcher
+# Install as systemd service (requires sudo)
+sudo python3 file_watcher.py install
 
-# View logs
-tail -f seen.log
+# Start service
+sudo systemctl start file-watcher
 
-# Check PID file
-cat /tmp/zonefile_monitor.pid
+# Check status and logs
+sudo systemctl status file-watcher
+sudo journalctl -u file-watcher -f
 ```
 
-## Key Implementation Details
+### PyInstaller packaging
+```bash
+# Create single executable (includes all dependencies)
+pip install pyinstaller
+pyinstaller --onefile --name file-watcher file_watcher.py
 
-- Uses `inotifywait -m -e create -e modify -e delete -e move` for file system monitoring
-- Only processes files matching `*.db` pattern
-- Implements single-instance protection via PID file at `/tmp/zonefile_monitor.pid`
-- Logs all events with timestamps to `seen.log`
-- Sends email notifications on API upload failures and script termination
-- Handles graceful shutdown with signal traps (INT, TERM, EXIT)
+# Deploy single file: dist/file-watcher
+```
+
+## Key Features
+
+- **Cross-platform**: Works on Linux and macOS using watchdog library
+- **Production-ready**: Rate limiting, retry logic, error handling, logging
+- **Hot-reload**: Configuration changes detected automatically without restart
+- **Debouncing**: Prevents duplicate uploads from rapid file system events
+- **Service integration**: Self-installing systemd service with auto-restart
+- **Structured logging**: JSON logs to external collector with startup/shutdown/error events
+- **Security**: Bearer token authentication, configurable file size limits
 
 ## File Processing Flow
 
-1. File system event detected → Filter for `.db` files → Check for MOVED_TO event
-2. Extract domain name from filename (basename without .db extension)  
-3. Upload file content to `$API_URL/$FILENAME` with Bearer authentication
-4. Log success/failure and send email notification on failure
+1. File system event detected → Check against configured patterns
+2. Apply debouncing (ignore events within 1 second of previous)
+3. Apply rate limiting based on configured requests per second
+4. Read file content and check size limits
+5. HTTP POST to configured API endpoint with Bearer token
+6. Retry with exponential backoff on failures
+7. Log errors to collector endpoint if configured
+
+## Development Notes
+
+- Dependencies: watchdog, requests, toml
+- Supports both development (venv) and production (system packages) deployment
+- All configuration changes logged with watched paths for debugging
+- Service runs as root for system file access
+- Config file should have restricted permissions (600) to protect tokens
