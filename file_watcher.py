@@ -12,6 +12,7 @@ import glob
 import time
 import requests
 import json
+import subprocess
 from datetime import datetime
 from pathlib import Path
 from watchdog.observers import Observer
@@ -331,13 +332,16 @@ WantedBy=multi-user.target
         with open(service_path, 'w') as f:
             f.write(service_file)
         
-        os.system("systemctl daemon-reload")
-        os.system("systemctl enable file-watcher.service")
+        subprocess.run(["systemctl", "daemon-reload"], check=True)
+        subprocess.run(["systemctl", "enable", "file-watcher.service"], check=True)
         print(f"Service installed at {service_path}")
         print("Use 'systemctl start file-watcher' to start the service")
         
     except PermissionError:
         print("Error: Root permissions required to install service")
+        sys.exit(1)
+    except subprocess.CalledProcessError as e:
+        print(f"Error running systemctl command: {e}")
         sys.exit(1)
     except Exception as e:
         print(f"Error installing service: {e}")
