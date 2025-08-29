@@ -466,28 +466,9 @@ class FileChangeHandler(FileSystemEventHandler):
     def _reload_config(self, config_path):
         """Reload configuration from file with atomic update"""
         try:
-            # Check if config file exists (could have been deleted)
+            # Check if config file exists (deletion now handled by on_deleted event)
             if not os.path.exists(config_path):
-                if not self.config_file_deleted:
-                    # First time detecting deletion
-                    error_msg = f"WARNING: Configuration file {config_path} was deleted! Service continuing with last known configuration."
-                    print(error_msg)
-                    # Log deletion as potential security incident
-                    log_url = getattr(self, 'config', {}).get('log_url')
-                    if log_url:
-                        try:
-                            log_data = {
-                                "timestamp": datetime.now().isoformat(),
-                                "level": "WARNING",
-                                "message": f"Configuration file deleted during runtime: {config_path}",
-                                "service": "file-watcher",
-                                "event_type": "config_deletion",
-                                "security_relevant": True
-                            }
-                            requests.post(log_url, json=log_data, headers={'Content-Type': 'application/json'}, timeout=10)
-                        except:
-                            pass
-                    self.config_file_deleted = True
+                # File missing - deletion already logged by on_deleted handler
                 return False
             
             # Load and validate new config without affecting current state
@@ -609,25 +590,30 @@ class FileChangeHandler(FileSystemEventHandler):
     def on_deleted(self, event):
         """Handle file deletion events"""
         if not event.is_directory and event.src_path.endswith('config.toml'):
+            # Apply debouncing to prevent duplicate deletion messages
+            if self._should_debounce(event.src_path):
+                return
+                
             # Handle config file deletion specially
-            error_msg = f"WARNING: Configuration file {event.src_path} was deleted! Service continuing with last known configuration."
-            print(error_msg)
-            # Log deletion as potential security incident
-            log_url = self.config.get('log_url')
-            if log_url:
-                try:
-                    log_data = {
-                        "timestamp": datetime.now().isoformat(),
-                        "level": "WARNING",
-                        "message": f"Configuration file deleted during runtime: {event.src_path}",
-                        "service": "file-watcher",
-                        "event_type": "config_deletion",
-                        "security_relevant": True
-                    }
-                    requests.post(log_url, json=log_data, headers={'Content-Type': 'application/json'}, timeout=10)
-                except:
-                    pass
-            self.config_file_deleted = True
+            if not self.config_file_deleted:  # Only log once per deletion
+                error_msg = f"WARNING: Configuration file {event.src_path} was deleted! Service continuing with last known configuration."
+                print(error_msg)
+                # Log deletion as potential security incident
+                log_url = self.config.get('log_url')
+                if log_url:
+                    try:
+                        log_data = {
+                            "timestamp": datetime.now().isoformat(),
+                            "level": "WARNING",
+                            "message": f"Configuration file deleted during runtime: {event.src_path}",
+                            "service": "file-watcher",
+                            "event_type": "config_deletion",
+                            "security_relevant": True
+                        }
+                        requests.post(log_url, json=log_data, headers={'Content-Type': 'application/json'}, timeout=10)
+                    except:
+                        pass
+                self.config_file_deleted = True
 
 def start_watching(config):
     """Start watching files for changes"""
