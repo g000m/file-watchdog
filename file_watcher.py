@@ -13,6 +13,7 @@ import time
 import requests
 import json
 import subprocess
+import re
 from datetime import datetime
 from pathlib import Path
 from watchdog.observers import Observer
@@ -130,6 +131,109 @@ def validate_config(config):
     
     return True
 
+def detect_file_type(file_path):
+    """Detect file type using magic bytes/file signatures"""
+    try:
+        with open(file_path, 'rb') as f:
+            header = f.read(16)  # Read first 16 bytes for magic number detection
+        
+        # Common file type signatures
+        if header.startswith(b'\x89PNG\r\n\x1a\n'):
+            return 'image/png'
+        elif header.startswith(b'\xff\xd8\xff'):
+            return 'image/jpeg'
+        elif header.startswith(b'GIF8'):
+            return 'image/gif'
+        elif header.startswith(b'%PDF'):
+            return 'application/pdf'
+        elif header.startswith(b'PK\x03\x04') or header.startswith(b'PK\x05\x06') or header.startswith(b'PK\x07\x08'):
+            return 'application/zip'
+        elif header.startswith(b'\x7fELF'):
+            return 'application/x-executable'
+        elif header.startswith(b'MZ'):
+            return 'application/x-executable'
+        elif b'\x00' in header[:8]:  # Binary file detection
+            return 'application/octet-stream'
+        else:
+            return 'text/plain'
+            
+    except Exception:
+        return 'unknown'
+
+def scan_for_sensitive_content(content, file_path):
+    """Scan file content for potentially sensitive information"""
+    sensitive_patterns = [
+        # Private keys
+        (r'-----BEGIN\s+(RSA\s+)?PRIVATE KEY-----', 'Private key detected'),
+        (r'-----BEGIN\s+OPENSSH PRIVATE KEY-----', 'SSH private key detected'),
+        
+        # API keys and tokens  
+        (r'["\']?[A-Za-z0-9_-]*api[_-]?key["\']?\s*[:=]\s*["\']?[A-Za-z0-9_-]{16,}', 'API key pattern detected'),
+        (r'["\']?[A-Za-z0-9_-]*token["\']?\s*[:=]\s*["\']?[A-Za-z0-9_.-]{16,}', 'Token pattern detected'),
+        (r'["\']?bearer["\']?\s*[:=]\s*["\']?[A-Za-z0-9_.-]{16,}', 'Bearer token detected'),
+        
+        # Database connection strings
+        (r'postgresql://[^"\s]+', 'Database connection string detected'),
+        (r'mysql://[^"\s]+', 'Database connection string detected'),
+        (r'mongodb://[^"\s]+', 'Database connection string detected'),
+        
+        # AWS credentials
+        (r'AKIA[0-9A-Z]{16}', 'AWS Access Key detected'),
+        (r'aws_secret_access_key["\']?\s*[:=]\s*["\']?[A-Za-z0-9/+=]{40}', 'AWS Secret Key detected'),
+        
+        # Common password patterns
+        (r'["\']?password["\']?\s*[:=]\s*["\']?[^\s"\']{8,}', 'Password pattern detected'),
+    ]
+    
+    # Convert bytes to string for text analysis
+    if isinstance(content, bytes):
+        try:
+            content_str = content.decode('utf-8', errors='ignore')
+        except UnicodeDecodeError:
+            return []  # Skip sensitive content scanning for binary files
+    else:
+        content_str = content
+    
+    findings = []
+    for pattern, description in sensitive_patterns:
+        if re.search(pattern, content_str, re.IGNORECASE):
+            findings.append(f"{description} in {file_path}")
+    
+    return findings
+
+def validate_file_content(file_path, config):
+    """Validate file content before upload"""
+    try:
+        # Get file type
+        file_type = detect_file_type(file_path)
+        
+        # Check if file type is allowed (if configured)
+        allowed_types = config.get('allowed_file_types', [])
+        if allowed_types and file_type not in allowed_types:
+            return False, f"File type {file_type} not in allowed types: {allowed_types}"
+        
+        # Block executable files by default
+        if file_type == 'application/x-executable':
+            return False, "Executable files are not allowed for security reasons"
+        
+        # Read file content for sensitive data scanning
+        with open(file_path, 'rb') as f:
+            content = f.read()
+        
+        # Skip sensitive content scanning for large binary files
+        if file_type.startswith('application/') and len(content) > 1024 * 1024:  # 1MB
+            return True, None  # Allow large binary files without content scanning
+        
+        # Scan for sensitive content in text files or small binary files
+        sensitive_findings = scan_for_sensitive_content(content, file_path)
+        if sensitive_findings:
+            return False, f"Sensitive content detected: {'; '.join(sensitive_findings)}"
+        
+        return True, None
+        
+    except Exception as e:
+        return False, f"Error validating file content: {e}"
+
 def log_error(message, log_url=None):
     """Log error message to collector if configured"""
     print(f"ERROR: {message}")
@@ -151,8 +255,15 @@ def log_error(message, log_url=None):
     except Exception as e:
         print(f"Failed to send error log: {e}")
 
-def upload_file(file_path, url, auth_token, max_size, retry_attempts=3, retry_delay=5, log_url=None):
-    """Upload file to API endpoint with retry logic"""
+def upload_file(file_path, url, auth_token, max_size, config, retry_attempts=3, retry_delay=5, log_url=None):
+    """Upload file to API endpoint with retry logic and content validation"""
+    
+    # Validate file content before attempting upload
+    is_valid, validation_error = validate_file_content(file_path, config)
+    if not is_valid:
+        error_msg = f"File validation failed for {file_path}: {validation_error}"
+        log_error(error_msg, log_url)
+        return False
     
     for attempt in range(retry_attempts):
         try:
@@ -371,7 +482,7 @@ class FileChangeHandler(FileSystemEventHandler):
         retry_attempts = self.config.get('retry_attempts', 3)
         retry_delay = self.config.get('retry_delay', 5)
         log_url = self.config.get('log_url')
-        upload_file(file_path, upload_url, auth_token, max_size, retry_attempts, retry_delay, log_url)
+        upload_file(file_path, upload_url, auth_token, max_size, self.config, retry_attempts, retry_delay, log_url)
     
     def on_created(self, event):
         """Handle file creation events"""
