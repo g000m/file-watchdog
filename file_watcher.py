@@ -195,10 +195,17 @@ class FileChangeHandler(FileSystemEventHandler):
             self.config = new_config
             self.watched_files = self._get_watched_files()
             
+            # Get all paths being watched
+            all_paths = []
+            for url, settings in self.config.get('upload', {}).items():
+                for pattern in settings.get('paths', []):
+                    all_paths.append(pattern)
+            
             message = f"Configuration reloaded from {config_path}"
             print(message)
+            print(f"Watching {len(all_paths)} path patterns: {all_paths}")
             
-            # Always log config reloads
+            # Always log config reloads with watched paths
             log_url = self.config.get('log_url')
             if log_url:
                 try:
@@ -206,7 +213,9 @@ class FileChangeHandler(FileSystemEventHandler):
                         "timestamp": datetime.now().isoformat(),
                         "level": "INFO",
                         "message": message,
-                        "service": "file-watcher"
+                        "service": "file-watcher",
+                        "watched_paths": all_paths,
+                        "path_count": len(all_paths)
                     }
                     requests.post(log_url, json=log_data, headers={'Content-Type': 'application/json'}, timeout=10)
                 except:
@@ -346,14 +355,24 @@ def main():
     config = load_config()
     log_url = config.get('log_url')
     
-    # Log startup
+    # Get initial watched paths for logging
+    all_paths = []
+    for url, settings in config.get('upload', {}).items():
+        for pattern in settings.get('paths', []):
+            all_paths.append(pattern)
+    
+    print(f"Watching {len(all_paths)} path patterns: {all_paths}")
+    
+    # Log startup with watched paths
     if log_url:
         try:
             startup_data = {
                 "timestamp": datetime.now().isoformat(),
                 "level": "INFO",
                 "message": "File Watcher service started",
-                "service": "file-watcher"
+                "service": "file-watcher",
+                "watched_paths": all_paths,
+                "path_count": len(all_paths)
             }
             requests.post(log_url, json=startup_data, headers={'Content-Type': 'application/json'}, timeout=10)
         except:
