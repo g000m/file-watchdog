@@ -614,6 +614,13 @@ class FileChangeHandler(FileSystemEventHandler):
                     except:
                         pass
                 self.config_file_deleted = True
+    
+    def on_moved(self, event):
+        """Handle file move/rename events (atomic file updates)"""
+        if not event.is_directory:
+            # Check if the destination file matches our patterns
+            if self._should_process_file(event.dest_path):
+                self._handle_file_change(event.dest_path, "moved")
 
 def start_watching(config):
     """Start watching files for changes"""
