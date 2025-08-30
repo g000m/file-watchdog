@@ -58,11 +58,27 @@ python3 file_watcher.py
 
 ### Service installation (Linux)
 ```bash
+# Set up virtual environment and dependencies
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+
+# Test the service runs correctly
+python3 file_watcher.py
+# Stop with Ctrl+C
+
 # Install as systemd service (requires sudo)
 sudo python3 file_watcher.py install
 
-# Start service
+# IMPORTANT: Edit service file to use venv Python
+sudo nano /etc/systemd/system/file-watcher.service
+# Change ExecStart line to use venv Python:
+# ExecStart=/path/to/your/venv/bin/python /path/to/file_watcher.py
+
+# Reload systemd and start service
+sudo systemctl daemon-reload
 sudo systemctl start file-watcher
+sudo systemctl enable file-watcher
 
 # Check status and logs
 sudo systemctl status file-watcher
