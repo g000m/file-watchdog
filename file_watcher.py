@@ -254,6 +254,11 @@ def scan_for_sensitive_content(content, file_path):
     
     return findings
 
+def expand_url_template(url_template, file_path):
+    """Replace {filename} in URL template with actual filename"""
+    filename = os.path.basename(file_path)
+    return url_template.replace('{filename}', filename)
+
 def validate_file_content(file_path, config):
     """Validate file content before upload"""
     try:
@@ -546,8 +551,8 @@ class FileChangeHandler(FileSystemEventHandler):
             self._reload_config(file_path)
             return
         
-        upload_url = self._get_upload_url(file_path)
-        if not upload_url:
+        upload_url_template = self._get_upload_url(file_path)
+        if not upload_url_template:
             return
         
         # Debounce rapid file changes
@@ -558,8 +563,11 @@ class FileChangeHandler(FileSystemEventHandler):
         # Apply rate limiting
         self._apply_rate_limit()
         
-        # Get settings for this URL
-        settings = self.config['upload'][upload_url]
+        # Expand URL template with filename
+        upload_url = expand_url_template(upload_url_template, file_path)
+        
+        # Get settings for this URL template
+        settings = self.config['upload'][upload_url_template]
         auth_token = settings['auth_token']
         
         # Parse max file size with error handling
