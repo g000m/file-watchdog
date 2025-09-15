@@ -318,7 +318,7 @@ def log_error(message, log_url=None):
     except Exception as e:
         print(f"Failed to send error log: {e}")
 
-def upload_file(file_path, url, auth_token, max_size, config, retry_attempts=3, retry_delay=5, log_url=None):
+def upload_file(file_path, url, auth_token, max_size, config, retry_attempts=3, retry_delay=5, log_url=None, mime_type='application/octet-stream'):
     """Upload file to API endpoint with retry logic and content validation"""
     
     # Validate file content before attempting upload
@@ -344,7 +344,7 @@ def upload_file(file_path, url, auth_token, max_size, config, retry_attempts=3, 
             # Prepare headers
             headers = {
                 'Authorization': f'Bearer {auth_token}',
-                'Content-Type': 'application/octet-stream'
+                'Content-Type': mime_type
             }
             
             # Calculate dynamic timeout based on file size (minimum 30 seconds, +1 second per 100KB)
@@ -569,6 +569,7 @@ class FileChangeHandler(FileSystemEventHandler):
         # Get settings for this URL template
         settings = self.config['upload'][upload_url_template]
         auth_token = settings['auth_token']
+        mime_type = settings.get('mime_type', 'application/octet-stream')
         
         # Parse max file size with error handling
         try:
@@ -583,7 +584,7 @@ class FileChangeHandler(FileSystemEventHandler):
         retry_attempts = self.config.get('retry_attempts', 3)
         retry_delay = self.config.get('retry_delay', 5)
         log_url = self.config.get('log_url')
-        upload_file(file_path, upload_url, auth_token, max_size, self.config, retry_attempts, retry_delay, log_url)
+        upload_file(file_path, upload_url, auth_token, max_size, self.config, retry_attempts, retry_delay, log_url, mime_type)
     
     def on_created(self, event):
         """Handle file creation events"""
